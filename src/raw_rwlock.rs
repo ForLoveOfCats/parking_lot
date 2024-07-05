@@ -16,6 +16,8 @@ use lock_api::{RawRwLock as RawRwLock_, RawRwLockUpgrade};
 use parking_lot_core::{
     self, deadlock, FilterOp, ParkResult, ParkToken, SpinWait, UnparkResult, UnparkToken,
 };
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 // This reader-writer lock implementation is based on Boost's upgrade_mutex:
@@ -54,14 +56,29 @@ const TOKEN_UPGRADABLE: ParkToken = ParkToken(ONE_READER | UPGRADABLE_BIT);
 /// Raw reader-writer lock type backed by the parking lot.
 pub struct RawRwLock {
     state: AtomicUsize,
+    contented_ns: AtomicU64,
+    type_name: &'static str,
+}
+
+impl Drop for RawRwLock {
+    fn drop(&mut self) {
+        let lock = crate::CONTENTIONS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+        let mut map = lock.lock().unwrap();
+        *map.entry(self.type_name).or_insert(Duration::from_secs(0)) +=
+            Duration::from_nanos(self.contented_ns.load(Ordering::SeqCst));
+    }
 }
 
 unsafe impl lock_api::RawRwLock for RawRwLock {
-    const INIT: RawRwLock = RawRwLock {
-        state: AtomicUsize::new(0),
-    };
-
     type GuardMarker = crate::GuardMarker;
+
+    fn new(type_name: &'static str) -> Self {
+        RawRwLock {
+            state: AtomicUsize::new(0),
+            contented_ns: AtomicU64::new(0),
+            type_name,
+        }
+    }
 
     #[inline]
     fn lock_exclusive(&self) {
@@ -613,6 +630,8 @@ impl RawRwLock {
 
     #[cold]
     fn lock_exclusive_slow(&self, timeout: Option<Instant>) -> bool {
+        let start = std::time::Instant::now();
+
         let try_lock = |state: &mut usize| {
             loop {
                 if *state & (WRITER_BIT | UPGRADABLE_BIT) != 0 {
@@ -644,7 +663,11 @@ impl RawRwLock {
         }
 
         // Step 2: wait for all remaining readers to exit the lock.
-        self.wait_for_readers(timeout, 0)
+        let result = self.wait_for_readers(timeout, 0);
+        let elapsed = start.elapsed();
+        self.contented_ns
+            .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+        result
     }
 
     #[cold]
@@ -677,6 +700,8 @@ impl RawRwLock {
 
     #[cold]
     fn lock_shared_slow(&self, recursive: bool, timeout: Option<Instant>) -> bool {
+        let start = std::time::Instant::now();
+
         let try_lock = |state: &mut usize| {
             let mut spinwait_shared = SpinWait::new();
             loop {
@@ -720,7 +745,11 @@ impl RawRwLock {
                 *state = self.state.load(Ordering::Relaxed);
             }
         };
-        self.lock_common(timeout, TOKEN_SHARED, try_lock, WRITER_BIT)
+        let result = self.lock_common(timeout, TOKEN_SHARED, try_lock, WRITER_BIT);
+        let elapsed = start.elapsed();
+        self.contented_ns
+            .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+        result
     }
 
     #[cold]

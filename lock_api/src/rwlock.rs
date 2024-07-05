@@ -36,15 +36,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// lock exists, and a shared lock can't be acquire while an exclusive lock
 /// exists.
 pub unsafe trait RawRwLock {
-    /// Initial value for an unlocked `RwLock`.
-    // A “non-constant” const item is a legacy way to supply an initialized value to downstream
-    // static items. Can hopefully be replaced with `const fn new() -> Self` at some point.
-    #[allow(clippy::declare_interior_mutable_const)]
-    const INIT: Self;
-
     /// Marker type which determines whether a lock guard should be `Send`. Use
     /// one of the `GuardSend` or `GuardNoSend` helper types here.
     type GuardMarker;
+
+    ///
+    fn new(type_name: &'static str) -> Self;
 
     /// Acquires a shared lock, blocking the current thread until it is able to do so.
     fn lock_shared(&self);
@@ -368,10 +365,10 @@ impl<R: RawRwLock, T> RwLock<R, T> {
     /// Creates a new instance of an `RwLock<T>` which is unlocked.
     #[cfg(has_const_fn_trait_bound)]
     #[inline]
-    pub const fn new(val: T) -> RwLock<R, T> {
+    pub fn new(val: T) -> RwLock<R, T> {
         RwLock {
             data: UnsafeCell::new(val),
-            raw: R::INIT,
+            raw: R::new(core::any::type_name::<T>()),
         }
     }
 
@@ -381,7 +378,7 @@ impl<R: RawRwLock, T> RwLock<R, T> {
     pub fn new(val: T) -> RwLock<R, T> {
         RwLock {
             data: UnsafeCell::new(val),
-            raw: R::INIT,
+            raw: R::new(core::any::type_name::<T>()),
         }
     }
 

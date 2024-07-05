@@ -38,6 +38,10 @@ type GuardMarker = lock_api::GuardSend;
 #[cfg(not(feature = "send_guard"))]
 type GuardMarker = lock_api::GuardNoSend;
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::Duration;
+
 pub use self::condvar::{Condvar, WaitTimeoutResult};
 pub use self::fair_mutex::{const_fair_mutex, FairMutex, FairMutexGuard, MappedFairMutexGuard};
 pub use self::mutex::{const_mutex, MappedMutexGuard, Mutex, MutexGuard};
@@ -50,10 +54,17 @@ pub use self::remutex::{
     ReentrantMutexGuard,
 };
 pub use self::rwlock::{
-    const_rwlock, MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard,
+    MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard,
     RwLockUpgradableReadGuard, RwLockWriteGuard,
 };
 pub use ::lock_api;
 
+///
+pub static CONTENTIONS: OnceLock<std::sync::Mutex<HashMap<&'static str, Duration>>> =
+    OnceLock::new();
+
 #[cfg(feature = "arc_lock")]
-pub use self::lock_api::{ArcMutexGuard, ArcReentrantMutexGuard, ArcRwLockReadGuard, ArcRwLockUpgradableReadGuard, ArcRwLockWriteGuard};
+pub use self::lock_api::{
+    ArcMutexGuard, ArcReentrantMutexGuard, ArcRwLockReadGuard, ArcRwLockUpgradableReadGuard,
+    ArcRwLockWriteGuard,
+};
